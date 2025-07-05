@@ -113,29 +113,58 @@ from sklearn.metrics import (
 )
 
 # Función para limpiar y preprocesar los datos
-def clean_data(df):
-    df = df.copy()
-    df = df.drop('ID', axis=1)
-    df = df.rename(columns={'default payment next month': 'default'})
+def limpieza(df):
+    df = df.rename(columns={'default payment next month':'default'})
+    df = df.drop(columns='ID')
     df = df.dropna()
-    df = df[(df['EDUCATION'] != 0) & (df['MARRIAGE'] != 0)]
-    df.loc[df['EDUCATION'] > 4, 'EDUCATION'] = 4
+    df['EDUCATION'] = [4 if i >=4 else i for i in df['EDUCATION']]
     return df
 
+# División de los datasets
+def div_train_test(df):
+    x = df.drop(columns='default')
+    y = df['default']
+    return x, y
+
 # Construcción del pipeline
-def model():
-    categories = ['SEX', 'EDUCATION', 'MARRIAGE']  
+def pipeline(x_train, y_train):
+    cat_columns = ['SEX', 'EDUCATION', 'MARRIAGE', 'PAY_0', 'PAY_2', 'PAY_3', 'PAY_4', 'PAY_5', 'PAY_6']
+    num_columns = [col for col in x_train.columns if col not in cat_columns]
     preprocessor = ColumnTransformer(
         transformers=[
-            ('cat', OneHotEncoder(handle_unknown='ignore'), categories)
-        ],
-        remainder='passthrough'
+            ('cat', OneHotEncoder(handle_unknown='ignore'), cat_columns),
+            ('num', 'passthrough', num_columns)
+        ]
     )
-    pipeline = Pipeline(steps=[
+    pipe = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('classifier', RandomForestClassifier(random_state=42))
     ])
-    return pipeline
+
+    param_grid = {
+        'classifier__n_estimators': [50, 100, 200],
+        'classifier__max_depth': [None, 5, 10, 20],
+        'classifier__min_samples_split': [2, 5, 10],
+        'classifier__min_samples_leaf': [1, 2, 4]
+    }
+    scoring = make_scorer(balanced_accuracy_score)
+    grid_search = GridSearchCV(
+        pipe,
+        param_grid=param_grid,
+        cv=10,
+        scoring=scoring,
+        n_jobs=-1,
+        verbose=1
+    )
+
+    grid_search.fit(x_train, y_train)
+    return grid_search
+
+# Guardar el modelo
+def guardar_modelo(modelo):
+    ruta = "files/models/model.pkl.gz"
+    with gzip.open(ruta, 'wb') as f:
+        pickle.dump(modelo, f)
 
 # Búsqueda de hiperparámetros
 def hyperparameters(model, n_splits, x_train, y_train, scoring):
@@ -157,107 +186,90 @@ def hyperparameters(model, n_splits, x_train, y_train, scoring):
     return estimator
 
 # Cálculo de métricas
-def metrics(model, x_train, y_train, x_test, y_test):
-    y_train_pred = model.predict(x_train)
-    y_test_pred = model.predict(x_test)
+def calcular_metricas_y_guardar(modelo, x_train, y_train, x_test, y_test):
+    y_pred_train = modelo.predict(x_train)
+    y_pred_test = modelo.predict(x_test)
 
-    train_metrics = {
-        'type': 'metrics',
-        'dataset': 'train',
-        'precision': precision_score(y_train, y_train_pred),
-        'balanced_accuracy': balanced_accuracy_score(y_train, y_train_pred),
-        'recall': recall_score(y_train, y_train_pred),
-        'f1_score': f1_score(y_train, y_train_pred)
-    }
+    def obtener_metricas(y_true, y_pred, dataset_nombre):
+        return {
+            'dataset': dataset_nombre,
+            'precision': precision_score(y_true, y_pred, zero_division=0),
+            'balanced_accuracy': balanced_accuracy_score(y_true, y_pred),
+            'recall': recall_score(y_true, y_pred, zero_division=0),
+            'f1_score': f1_score(y_true, y_pred, zero_division=0)
+        }
+    resultados = [
+        obtener_metricas(y_train, y_pred_train, 'train'),
+        obtener_metricas(y_test, y_pred_test, 'test')
+    ]
+    ruta = 'files/output/metrics.json'
+    with open(ruta, 'w') as f:
+        for fila in resultados:
+            f.write(json.dumps(fila) + '\n')
 
-    test_metrics = {
-        'type': 'metrics',
-        'dataset': 'test',
-        'precision': precision_score(y_test, y_test_pred),
-        'balanced_accuracy': balanced_accuracy_score(y_test, y_test_pred),
-        'recall': recall_score(y_test, y_test_pred),
-        'f1_score': f1_score(y_test, y_test_pred)
-    }
-
-    return train_metrics, test_metrics
 
 # Cálculo de matrices de confusión
-def matrix(model, x_train, y_train, x_test, y_test):
+def matriz(model, x_train, y_train, x_test, y_test,ruta='files/output/metrics.json'):
     y_train_pred = model.predict(x_train)
     y_test_pred = model.predict(x_test)
 
-    tn_train, fp_train, fn_train, tp_train = confusion_matrix(y_train, y_train_pred).ravel()
-    tn_test, fp_test, fn_test, tp_test = confusion_matrix(y_test, y_test_pred).ravel()
+    def obtener_cm_dict(y_true, y_pred, dataset_nombre):
+        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+        return {
+            'type': 'cm_matrix',
+            'dataset': dataset_nombre,
+            'true_0': {
+                'predicted_0': int(cm[0, 0]),
+                'predicted_1': int(cm[0, 1])
+            },
+            'true_1': {
+                'predicted_0': int(cm[1, 0]),
+                'predicted_1': int(cm[1, 1])
+            }
+        }
+    matrices = [
+        obtener_cm_dict(y_train, y_train_pred, 'train'),
+        obtener_cm_dict(y_test, y_test_pred, 'test')
+    ]
+    with open(ruta, 'a') as f:
+        for fila in matrices:
+            f.write(json.dumps(fila) + '\n')
+    
 
-    train_matrix = {
-        'type': 'cm_matrix',
-        'dataset': 'train', 
-        'true_0': {'predicted_0': int(tn_train), 'predicted_1': int(fp_train)},
-        'true_1': {'predicted_0': int(fn_train), 'predicted_1': int(tp_train)}
-    }
-
-    test_matrix = {
-        'type': 'cm_matrix',
-        'dataset': 'test', 
-        'true_0': {'predicted_0': int(tn_test), 'predicted_1': int(fp_test)},
-        'true_1': {'predicted_0': int(fn_test), 'predicted_1': int(tp_test)}
-    }
-
-    return train_matrix, test_matrix
-
-# Guardar el modelo
-def save_model(model):
-    os.makedirs('files/models', exist_ok=True)
-    with gzip.open('files/models/model.pkl.gz', 'wb') as f:
-        pickle.dump(model, f)
-
-# Guardar métricas
-def save_metrics(metrics):
-    os.makedirs('files/output', exist_ok=True)
-    with open("files/output/metrics.json", "w") as f:
-        for metric in metrics:
-            f.write(json.dumps(metric) + "\n")
-
-            
 # ------------------- EJECUCIÓN PRINCIPAL -------------------
 
-# Archivos de entrada
-file_Test = 'files/input/test_data.csv.zip'
-file_Train = 'files/input/train_data.csv.zip'
+if __name__ == "__main__":
 
-# Cargar datos de prueba
-with zipfile.ZipFile(file_Test, 'r') as zip:
-    with zip.open('test_default_of_credit_card_clients.csv') as f:
-        df_Test = pd.read_csv(f)
+    os.makedirs("files/models", exist_ok=True)
+    os.makedirs("files/output", exist_ok=True)
 
-# Cargar datos de entrenamiento
-with zipfile.ZipFile(file_Train, 'r') as zip:
-    with zip.open('train_default_of_credit_card_clients.csv') as f:
-        df_Train = pd.read_csv(f)
+    with zipfile.ZipFile('files/input/train_data.csv.zip', 'r') as comp:
+        train_data = comp.namelist()[0]
+        with comp.open(train_data) as arch:
+            df_train = pd.read_csv(arch)
 
-# Preprocesar
-df_Test = clean_data(df_Test)
-df_Train = clean_data(df_Train)
+    with zipfile.ZipFile('files/input/test_data.csv.zip', 'r') as comp:
+        test_data = comp.namelist()[0]
+        with comp.open(test_data) as arch:
+            df_test = pd.read_csv(arch)
 
-# Separar variables
-x_train, y_train = df_Train.drop('default', axis=1), df_Train['default']
-x_test, y_test = df_Test.drop('default', axis=1), df_Test['default']
+    # limpieza 
+    df_train = limpieza(df_train)
+    df_test = limpieza(df_test)
 
-# Crear el modelo (pipeline)
-model_pipeline = model()
+    # división en x, y
+    x_train, y_train = div_train_test(df_train)
+    x_test, y_test = div_train_test(df_test)
 
-# Ajustar hiperparámetros con validación cruzada
-grid_model = hyperparameters(model_pipeline, 10, x_train, y_train, 'balanced_accuracy')
+    # entrenamiento y optimización
+    grid = pipeline(x_train, y_train)
+    modelo = grid.best_estimator_
 
+    # guardar modelo
+    guardar_modelo(grid)
 
-# Guardar el modelo entrenado
-save_model(grid_model)
+    # calcular métricas y guardar
+    calcular_metricas_y_guardar(modelo, x_train, y_train, x_test, y_test)
 
-# Calcular métricas
-train_metrics, test_metrics = metrics(grid_model.best_estimator_, x_train, y_train, x_test, y_test)
-
-# Calcular matrices de confusión
-train_matrix, test_matrix = matrix(grid_model.best_estimator_, x_train, y_train, x_test, y_test)
-
-# Guardar métricas y matrices en un solo archivo
-save_metrics([train_metrics, test_metrics, train_matrix, test_matrix])
+    # matrices de confusión
+    matriz(modelo, x_train, y_train, x_test, y_test, ruta='files/output/metrics.json')
