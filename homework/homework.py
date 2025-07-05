@@ -106,6 +106,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import (
     precision_score,
+    make_scorer,
     recall_score,
     f1_score,
     balanced_accuracy_score,
