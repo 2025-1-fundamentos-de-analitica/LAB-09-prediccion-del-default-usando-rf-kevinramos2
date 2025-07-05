@@ -129,6 +129,7 @@ def div_train_test(df):
 
 # Construcción del pipeline
 def pipeline(x_train, y_train):
+
     cat_columns = ['SEX', 'EDUCATION', 'MARRIAGE', 'PAY_0', 'PAY_2', 'PAY_3', 'PAY_4', 'PAY_5', 'PAY_6']
     num_columns = [col for col in x_train.columns if col not in cat_columns]
     preprocessor = ColumnTransformer(
@@ -141,7 +142,6 @@ def pipeline(x_train, y_train):
         ('preprocessor', preprocessor),
         ('classifier', RandomForestClassifier(random_state=42))
     ])
-
     param_grid = {
         'classifier__n_estimators': [50, 100, 200],
         'classifier__max_depth': [None, 5, 10, 20],
@@ -149,6 +149,7 @@ def pipeline(x_train, y_train):
         'classifier__min_samples_leaf': [1, 2, 4]
     }
     scoring = make_scorer(balanced_accuracy_score)
+    # skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     grid_search = GridSearchCV(
         pipe,
         param_grid=param_grid,
@@ -157,9 +158,10 @@ def pipeline(x_train, y_train):
         n_jobs=-1,
         verbose=1
     )
-
     grid_search.fit(x_train, y_train)
+
     return grid_search
+
 
 # Guardar el modelo
 def guardar_modelo(modelo):
@@ -167,27 +169,9 @@ def guardar_modelo(modelo):
     with gzip.open(ruta, 'wb') as f:
         pickle.dump(modelo, f)
 
-# Búsqueda de hiperparámetros
-def hyperparameters(model, n_splits, x_train, y_train, scoring):
-    estimator = GridSearchCV(
-        estimator=model,
-        param_grid={
-            'classifier__n_estimators': [100, 200],
-            'classifier__max_depth': [None, 5, 10],
-            'classifier__min_samples_split': [2, 5],
-            'classifier__min_samples_leaf': [1, 2]
-        },
-        cv=n_splits,
-        refit=True,
-        verbose=0,
-        return_train_score=False,
-        scoring=scoring
-    )
-    estimator.fit(x_train, y_train)
-    return estimator
-
-# Cálculo de métricas
+# Calcular métricas y guardar
 def calcular_metricas_y_guardar(modelo, x_train, y_train, x_test, y_test):
+
     y_pred_train = modelo.predict(x_train)
     y_pred_test = modelo.predict(x_test)
 
@@ -199,10 +183,12 @@ def calcular_metricas_y_guardar(modelo, x_train, y_train, x_test, y_test):
             'recall': recall_score(y_true, y_pred, zero_division=0),
             'f1_score': f1_score(y_true, y_pred, zero_division=0)
         }
+
     resultados = [
         obtener_metricas(y_train, y_pred_train, 'train'),
         obtener_metricas(y_test, y_pred_test, 'test')
     ]
+
     ruta = 'files/output/metrics.json'
     with open(ruta, 'w') as f:
         for fila in resultados:
@@ -210,10 +196,9 @@ def calcular_metricas_y_guardar(modelo, x_train, y_train, x_test, y_test):
 
 
 # Cálculo de matrices de confusión
-def matriz(model, x_train, y_train, x_test, y_test,ruta='files/output/metrics.json'):
-    y_train_pred = model.predict(x_train)
-    y_test_pred = model.predict(x_test)
-
+def matriz(modelo, x_train, y_train, x_test, y_test, ruta='files/output/metrics.json'):
+    y_pred_train = modelo.predict(x_train)
+    y_pred_test = modelo.predict(x_test)
     def obtener_cm_dict(y_true, y_pred, dataset_nombre):
         cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
         return {
@@ -229,12 +214,13 @@ def matriz(model, x_train, y_train, x_test, y_test,ruta='files/output/metrics.js
             }
         }
     matrices = [
-        obtener_cm_dict(y_train, y_train_pred, 'train'),
-        obtener_cm_dict(y_test, y_test_pred, 'test')
+        obtener_cm_dict(y_train, y_pred_train, 'train'),
+        obtener_cm_dict(y_test, y_pred_test, 'test')
     ]
     with open(ruta, 'a') as f:
         for fila in matrices:
             f.write(json.dumps(fila) + '\n')
+
     
 
 # ------------------- EJECUCIÓN PRINCIPAL -------------------
